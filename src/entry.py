@@ -296,13 +296,16 @@ def process_files(
 
         if gray_image is None:
             # Error OMR case
-            new_file_path = outputs_namespace.paths.errors_dir.joinpath(file_name)
             outputs_namespace.OUTPUT_SET.append(
                 [file_name] + outputs_namespace.empty_resp
             )
-            if check_and_move(
-                constants.ERROR_CODES.NO_MARKER_ERR, file_path, new_file_path
-            ):
+            new_file_path, moved = check_and_move(
+                constants.ERROR_CODES.NO_MARKER_ERR,
+                file_name,
+                outputs_namespace,
+                tuning_config,
+            )
+            if moved:
                 err_line = [
                     file_name,
                     file_path,
@@ -420,11 +423,19 @@ def process_files(
         else:
             # multi_marked file
             logger.info(f"[{files_counter}] Found multi-marked file: '{file_id}'")
-            new_file_path = outputs_namespace.paths.multi_marked_dir.joinpath(file_name)
-            if check_and_move(
-                constants.ERROR_CODES.MULTI_BUBBLE_WARN, file_path, new_file_path
-            ):
-                mm_line = [file_name, file_path, new_file_path, "NA"] + resp_array
+            new_output_file_path, moved = check_and_move(
+                constants.ERROR_CODES.MULTI_BUBBLE_WARN,
+                file_name,
+                outputs_namespace,
+                tuning_config,
+            )
+            if moved:
+                mm_line = [
+                    file_name,
+                    file_path,
+                    new_output_file_path,
+                    "NA",
+                ] + resp_array
                 pd.DataFrame(mm_line, dtype=str).T.to_csv(
                     outputs_namespace.files_obj["MultiMarked"],
                     mode="a",
@@ -441,10 +452,43 @@ def process_files(
     print_stats(start_time, files_counter, tuning_config)
 
 
-def check_and_move(error_code, file_path, filepath2):
+def check_and_move(error_code, file_name, outputs_namespace, tuning_config):
     # TODO: fix file movement into error/multimarked/invalid etc again
-    STATS.files_not_moved += 1
-    return True
+    save_marked_dir = outputs_namespace.paths.save_marked_dir
+    if error_code == constants.ERROR_CODES.NO_MARKER_ERR:
+        new_directory = outputs_namespace.paths.errors_dir
+
+    if error_code == constants.ERROR_CODES.MULTI_BUBBLE_WARN:
+        new_directory = outputs_namespace.paths.multi_marked_dir
+
+    saved_file_path = save_marked_dir.joinpath(file_name)
+    new_file_path = new_directory.joinpath(file_name)
+
+    if os.path.exists(new_file_path):
+        STATS.files_not_moved += 1
+        logger.warning(
+            f"Output path already exists at {new_file_path}. Not moving the input file: {saved_file_path}"
+        )
+        return new_file_path, False
+
+    if not os.path.exists(saved_file_path):
+        STATS.files_not_moved += 1
+        logger.warning(f"Input path doesn't exists at {saved_file_path}.")
+        return new_file_path, False
+
+    logger.info("Moving:", saved_file_path, new_file_path)
+    os.rename(saved_file_path, new_file_path)
+    STATS.files_moved += 1
+    if tuning_config.outputs.colored_outputs_enabled:
+        colored_saved_file_path = save_marked_dir.joinpath("colored", file_name)
+        colored_new_file_path = new_directory.joinpath("colored", file_name)
+        if os.path.exists(colored_saved_file_path):
+            logger.info(
+                "Moving colored:", colored_saved_file_path, colored_new_file_path
+            )
+            os.rename(colored_saved_file_path, colored_new_file_path)
+
+    return new_file_path, True
 
 
 def print_stats(start_time, files_counter, tuning_config):
